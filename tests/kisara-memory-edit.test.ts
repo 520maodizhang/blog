@@ -1,0 +1,234 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createMemoryEditor, memoryEdits } from "../src/themes/kisara/lib/gateMemoryEdit.ts";
+import { memoryTimeline } from "../src/themes/kisara/lib/gateStory.ts";
+import { advanceGateAutoplay } from "../src/themes/kisara/lib/gateAutoplay.ts";
+
+const ready = () => true;
+const activeShots = (frame: ReturnType<ReturnType<typeof createMemoryEditor>["snapshot"]>) =>
+  frame.weights.flatMap((weight, index) => weight > 0 ? [index] : []);
+
+test("a continuous boundary crossing spends only the post-crossing part of its frame", () => {
+  const editor = createMemoryEditor(0.019);
+  const frame = editor.update(0.025, 16, ready);
+  assert.ok(frame.weights[0] > 0, "Starting must not add a blank animation frame");
+  assert.ok(frame.weights[0] < 0.01, "Do not charge the pre-crossing interval to the new shot");
+});
+
+test("fast continued travel never rolls a partly entered shot back to the old shot", () => {
+  for (const [start, enter, latest, incoming] of [[0.49, 0.51, 0.7, 6], [0.51, 0.49, 0.35, 5]]) {
+    const editor = createMemoryEditor(start);
+    editor.update(enter, 0, ready);
+    const before = editor.update(enter, 30, ready);
+    const after = editor.update(latest, 10, ready);
+    assert.ok(after.weights[incoming] >= before.weights[incoming], "Same-direction input cannot cause a visual recoil");
+    let elapsed = 10;
+    while (editor.active && elapsed < 300) { editor.update(latest, 10, ready); elapsed += 10; }
+    assert.equal(editor.active, false);
+    assert.ok(elapsed <= 250, "Do not queue a full obsolete edit before the latest target");
+  }
+});
+
+test("softness settles continuously at either endpoint without a sharpness pulse", () => {
+  const editor = createMemoryEditor(0.49);
+  editor.update(0.51, 0, ready);
+  editor.update(0.51, 40, ready);
+  const almostBack = editor.update(0.49, 39, ready);
+  assert.ok(almostBack.softness[5] < 0.002);
+  editor.update(0.49, 1, ready);
+  assert.ok(editor.snapshot().softness.every(value => value === 0));
+  editor.reset(0.51);
+  editor.update(0.49, 0, ready);
+  for (let i = 0; i < 17; i++) editor.update(0.49, 10, ready);
+  const nearEnd = editor.update(0.49, 9, ready);
+  assert.ok(nearEnd.softness[5] < 0.002, "The dominant plate must not pop sharp at completion");
+});
+
+test("every boundary has a continuous handoff in both directions without threshold flicker", () => {
+  for (let index = 0; index < memoryTimeline.length; index++) {
+    const start = memoryTimeline[index].start;
+    const editor = createMemoryEditor(start - 0.01);
+    const before = editor.snapshot();
+    const initial = editor.update(start + 0.005, 0, ready);
+    assert.deepEqual(initial.weights, before.weights);
+    assert.equal(initial.baseOpacity, before.baseOpacity);
+    assert.equal(editor.active, true);
+    const halfway = editor.update(start + 0.0005, 40, ready);
+    assert.ok(halfway.weights[index] > 0 && halfway.weights[index] < 1);
+    for (let i = 0; i < 20; i++) editor.update(start + (i % 2 ? -0.001 : 0.001), 16, ready);
+    assert.deepEqual(activeShots(editor.snapshot()), [index]);
+    assert.equal(editor.active, false);
+    const backward = editor.update(start - 0.005, 0, ready);
+    assert.deepEqual(activeShots(backward), [index]);
+    assert.equal(editor.active, true);
+    for (let i = 0; i < 20; i++) editor.update(start - 0.005, 16, ready);
+    assert.equal(editor.active, false);
+    assert.deepEqual(activeShots(editor.snapshot()), index ? [index - 1] : []);
+    assert.equal(editor.snapshot().baseOpacity, index ? 0 : 1);
+  }
+});
+
+test("stopping inside a reaction edit still finishes in real time at 30/60/120 Hz", () => {
+  for (const fps of [30, 60, 120]) {
+    for (const index of [6, 7, 8]) {
+      const start = memoryTimeline[index].start;
+      const editor = createMemoryEditor(start - 0.01);
+      editor.update(start + 0.005, 10000, ready);
+      assert.equal(editor.active, true);
+      let elapsed = 0;
+      while (editor.active && elapsed < 300) {
+        editor.update(start + 0.005, 1000 / fps, ready);
+        elapsed += 1000 / fps;
+      }
+      assert.equal(editor.active, false);
+      assert.ok(elapsed >= memoryEdits[index].duration - 0.01);
+      assert.ok(elapsed <= memoryEdits[index].duration + 1000 / fps + 0.01);
+      assert.deepEqual(activeShots(editor.snapshot()), [index]);
+    }
+  }
+});
+
+test("reversing and resuming a partial dissolve keeps its current opacity", () => {
+  const editor = createMemoryEditor(0.49);
+  editor.update(0.51, 0, ready);
+  const forward = editor.update(0.51, 40, ready);
+  assert.ok(forward.weights[6] > 0 && forward.weights[6] < 0.5);
+  assert.deepEqual(editor.update(0.49, 0, ready), forward);
+  const reverse = editor.update(0.49, 20, ready);
+  assert.ok(reverse.weights[6] < forward.weights[6]);
+  assert.deepEqual(editor.update(0.51, 0, ready), reverse);
+  for (let i = 0; i < 15; i++) editor.update(0.51, 16, ready);
+  assert.deepEqual(activeShots(editor.snapshot()), [6]);
+  assert.equal(editor.active, false);
+});
+
+test("detail softens during overlap and returns sharp without a color or exposure layer", () => {
+  const editor = createMemoryEditor(0.49);
+  editor.update(0.51, 0, ready);
+  for (let i = 0; i < 5; i++) editor.update(0.51, 18, ready);
+  const middle = editor.snapshot();
+  assert.ok(Math.abs(middle.weights[5] - 0.5) < 1e-10);
+  assert.ok(Math.abs(middle.weights[6] - 0.5) < 1e-10);
+  assert.equal(middle.softness[5], 1);
+  assert.equal(middle.softness[6], 1);
+  assert.equal('bridgeOpacity' in middle, false);
+  assert.equal('bridgeColor' in middle, false);
+  const interrupted = editor.update(0.49, 0, ready);
+  assert.deepEqual(interrupted, middle);
+  for (let i = 0; i < 20; i++) editor.update(0.49, 16, ready);
+  assert.ok(editor.snapshot().softness.every(value => value === 0));
+});
+
+test("decoding delays retain the old shot and retargeting never replaces a visible image", () => {
+  const editor = createMemoryEditor(0.49);
+  const old = editor.snapshot();
+  for (let i = 0; i < 100; i++) assert.deepEqual(editor.update(0.51, 500, () => false), old);
+  assert.equal(editor.active, false);
+  assert.deepEqual(editor.update(0.51, 10000, ready).weights, old.weights);
+  const mid = editor.update(0.51, 30, ready);
+  assert.ok(mid.weights[6] > 0);
+  assert.deepEqual(editor.update(0.9, 0, ready), mid);
+  assert.equal(editor.active, true);
+  let elapsed = 0;
+  while (editor.active && elapsed < 500) {
+    const frame = editor.update(0.9, 10, ready);
+    assert.ok(activeShots(frame).length <= 2);
+    assert.equal(frame.weights[7], 0, "A rapid scrub must not replay intermediate shots");
+    elapsed += 10;
+  }
+  assert.equal(editor.active, false);
+  assert.deepEqual(activeShots(editor.snapshot()), [8]);
+});
+
+test("reduced motion omits soft layers and never uncovers the blue base", () => {
+  const editor = createMemoryEditor();
+  for (const fill of [0.03, 0]) {
+    editor.update(fill, 0, ready, true);
+    for (let i = 0; i < 12; i++) {
+      const frame = editor.update(fill, 10, ready, true);
+      assert.ok(frame.softness.every(value => value === 0));
+      assert.equal(frame.weights[0] + (1 - frame.weights[0]) * frame.baseOpacity, 1);
+    }
+  }
+  assert.equal(editor.snapshot().baseOpacity, 1);
+});
+
+test("irregular bidirectional scrubbing stays continuous, bounded and settles on the latest request", () => {
+  for (const reducedMotion of [false, true]) {
+    for (const intervals of [[1000 / 30], [1000 / 60], [1000 / 120], [7, 13, 28, 9, 43]]) {
+      const editor = createMemoryEditor();
+      const fills = [.004, .019, .032, .12, .135, .14, .29, .42, .33, .16, .49, .68, .52, .85, .69, .03, 0, .51];
+      for (let i = 0; i < 180; i++) {
+        const fill = fills[i % fills.length];
+        const before = editor.snapshot();
+        const interrupted = editor.update(fill, 0, ready, reducedMotion);
+        assert.deepEqual(interrupted.weights, before.weights, "Zero elapsed time cannot replace a visible image");
+        assert.equal(interrupted.baseOpacity, before.baseOpacity);
+        activeShots(before).forEach(index => assert.equal(interrupted.softness[index], before.softness[index]));
+        const frame = editor.update(fill, intervals[i % intervals.length], ready, reducedMotion);
+        assert.ok(activeShots(frame).length <= 2);
+        assert.ok([...frame.weights, ...frame.softness].every(value => Number.isFinite(value) && value >= 0 && value <= 1));
+        const total = frame.weights.reduce((sum, value) => sum + value, 0);
+        assert.ok(frame.baseOpacity === 1 || Math.abs(total - 1) < 1e-9);
+        if (reducedMotion) assert.ok(frame.softness.every(value => value === 0));
+      }
+      for (let time = 0; time < 400; time += 10) editor.update(.51, 10, ready, reducedMotion);
+      assert.equal(editor.active, false);
+      assert.deepEqual(activeShots(editor.snapshot()), [6]);
+      assert.ok(editor.snapshot().softness.every(value => value === 0));
+    }
+  }
+});
+
+test("a fast crossing catches up sooner without accelerating a calm or paused edit", () => {
+  const finish = (fast: boolean) => {
+    const editor = createMemoryEditor(.29);
+    if (fast) editor.update(.323, 8, ready);
+    editor.update(.335, fast ? 8 : 0, ready);
+    let elapsed = 0;
+    while (editor.active && elapsed < 250) {
+      editor.update(fast ? .375 : .335, 10, ready);
+      elapsed += 10;
+    }
+    assert.equal(editor.active, false);
+    assert.deepEqual(activeShots(editor.snapshot()), [3]);
+    return elapsed;
+  };
+  assert.ok(finish(true) < finish(false));
+  assert.equal(finish(false), memoryEdits[3].duration);
+});
+
+test("AUTO retains every authored shot at 30/60/120 Hz without queued edits", () => {
+  for (const fps of [30, 60, 120]) {
+    const editor = createMemoryEditor();
+    const seen: number[] = [];
+    const dwell = memoryTimeline.map(() => 0);
+    let fill = 0;
+    for (let elapsed = 0; elapsed < 9000; elapsed += 1000 / fps) {
+      fill = advanceGateAutoplay(fill, 1000 / fps);
+      const frame = editor.update(fill, 1000 / fps, ready);
+      const shot = frame.weights.findIndex(weight => weight > 0.7);
+      if (shot >= 0) {
+        if (!seen.includes(shot)) seen.push(shot);
+        dwell[shot] += 1000 / fps;
+      }
+      assert.ok(activeShots(frame).length <= 2);
+    }
+    assert.deepEqual(seen, [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    for (const index of [2, 3, 4, 5]) assert.ok(dwell[index] > 350);
+    assert.equal(editor.active, false);
+  }
+});
+
+test("reset and a background time jump cannot leave softness or replay an old edit", () => {
+  const editor = createMemoryEditor(0.49);
+  editor.update(0.51, 0, ready);
+  const bounded = editor.update(0.51, 30000, ready);
+  assert.ok(bounded.weights[6] < 0.5);
+  editor.reset(0);
+  assert.equal(editor.snapshot().baseOpacity, 1);
+  assert.equal(editor.active, false);
+  editor.reset(1);
+  assert.deepEqual(activeShots(editor.snapshot()), [8]);
+  assert.ok(editor.snapshot().softness.every(value => value === 0));
+});

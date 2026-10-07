@@ -1,0 +1,244 @@
+# Fuyukawa Presentation Refresh
+
+## Scope
+
+Theme-local supplement to the repository's `DEVELOPMENT_NOTES.md`. This file owns
+only the September 2026 Fuyukawa presentation refresh; shared architecture and
+Kisara history remain authoritative in the repository note, which is not edited.
+
+## Current State
+
+- 2026-09-26 千绘莉表情动作重做：用户明确指出前几轮实现并没有真正做出可见表情，悬停无反馈、点击只剩耳朵轻动，要求补上 wink、微笑、张口等动作。本轮确认旧实现的问题不只是刷新时序：表情参数使用逐帧累加，幅度偏小，且没有把当前表情参数从上一种反应中清零。`lib/live2d-input.mjs` 现改为按模型实际最小/最大范围写入明确目标值：悬停笑眼，点击/触摸用较长单眼 wink + 双眼笑眼 + 微笑嘴型 + 明显张口 + 轻眉动，待机保留双眼眨眼/微笑/好奇反应；每帧先恢复表情参数默认值，动作结束后回到中性。根节点补充 `pointerdown` 兜底与 canvas `pointermove` 悬停捕获。定向测试 16/16、`npm exec astro build` 78 页面/79 Pagefind 页面通过；未使用浏览器或子代理，真人仍需确认实际模型视觉是否达到预期。
+- 2026-09-26 千绘莉点击无动作根因修复：用户再次反馈触摸/点击没有可见动作。确认前一轮 `next.update` 包装器在第三方 `LAppModel.update()` 之前写入表情参数，而运行时随后 `loadParameters()`、物理更新和 Cubism Core `model.update()` 会覆盖/消费掉这些值，导致实际绘制仍是原姿态。现改为先执行原始更新，再写入反应参数，并额外调用一次底层模型更新刷新当前帧；pointer capture 下的抬起事件同时由 document 捕获监听兜底。回归测试明确覆盖“原始更新后参数仍生效”和模型刷新计数。定向测试 16/16、直接 Astro 构建 78 页/79 索引通过；未用浏览器/子代理，真人仍需确认点击、触摸和单眼 wink 的实际观感。
+- 2026-09-26 千绘莉表情返工：用户真人反馈上一轮点击/触摸近乎不可见，并指出 Live2D 软件演示有表情动作。核对下载原件只有 `.moc3/.cdi3/.model3/.physics3` 和贴图，未含单独动作/表情关键帧；这不等于模型没有可驱动表情。用原始 `.moc3` 和 Cubism Core 5.1 在本地逐项比较网格：`ParamCheek` 无可测顶点/透明度响应，眉嘴端值很小，眼睛开合、笑眼、侧发和头 Z 轴有明显响应。上一轮 240ms 短眨眼 + 低幅脸颊作为主反馈是失当方案，现已弃用。点击/触摸的单眼闭合延长到约 1 秒并配合笑眼、温和眉嘴、最多 2 度倾头与侧发；悬停用笑眼，待机随机选择眨眼/笑眼/轻倾头。减少动态效果时禁用随机待机和倾头/发丝，保留点击表情；远端互动模块导入失败不再静默吞错。未篡改模型原件或增加不存在的动作文件，不能宣称复刻未提供关键帧的视频。定向测试 16/16、直接 Astro 构建 78 页/79 索引通过；未运行会生成全站素材的完整 `npm run build`，未用浏览器/子代理，真人效果仍需用户验收。
+- 2026-09-26 千绘莉交互返工：前轮鼠标坐标衰减仍把头、眼绑在同一输入上，用户报告面部与眼部观感奇怪。固定版本 `live2d-widgets@1.0.0-rc.6` 的 Cubism 5 模型模块允许在主题侧捕获 `AppDelegate`，只给本模型的核心更新包一层参数处理：头部 X/Y 分别收敛为 22%/18%，Z 轴鼠标复合扭转归零，眼珠保留 68%/55%，身体 X 28%；轻量脸颊和单/双眼短眨眼分别回应悬停、点击、9-18 秒随机待机。模型包没有动作或表情文件，未伪造资源、未碰 `.moc3`/贴图/物理，也未编辑其他主题。路由/隐藏/销毁恢复模型方法及监听，模块加载失败则退回旧输入衰减；减少动态效果偏好停止自发表情。主题定向测试 16/16、直接 Astro 构建 78 页/79 索引通过；未用浏览器或子代理，真实模型表情方向与手感仍待用户验收。此方案依赖固定 CDN 模块的内部模型接口，升级依赖时须重新核对。
+- 2026-09-26 Live2D 鼠标跟随微调：原 `live2d-widgets@1.0.0-rc.6` 的 Cubism 5 运行时会把同一份指针偏移直接映射为 `AngleX/AngleY/AngleZ` 与眼珠参数，其中 `AngleZ` 由横纵偏移相乘，斜向移动时容易出现脸部扭转和眼部变形。新增主题专属 `lib/live2d-input.mjs`，在外部运行时的 document `mousemove` 监听前对输入做中心化衰减（X 0.72、Y 0.56），保留眼动但收敛头部幅度和 Z 轴串扰；路由销毁时清理监听。未修改 `.moc3`、贴图、模型参数或其他主题。定向测试 14/14 通过；浏览器和真人视觉验收仍待用户确认。
+- 2026-09-26 Fuyukawa Live2D 已接入用户提供的“雪村千绘莉” Cubism 3 模型：模型配置位于 `public/themes/fuyukawa-kagari/live2d/waifu-tips.json`，资源位于同目录 `chieri/`。发布副本保留 `.moc3/.cdi3/.physics3`，修正 `.model3.json` 的贴图相对路径，并将仅有的 8192x8192 贴图压为 4096x4096 PNG（490697 bytes）；下载目录原件未修改。`BaseLayout.astro` 由远端模型 API 改为本地 `waifuPath`，移除当前没有实际切换能力的“换模型/换衣服”按钮，保留显示/隐藏、说句话、拍照和关闭工具。Live2D 定向测试 13/13，`npm exec astro build` 生成 78 页面 / 79 Pagefind 页面并确认 6 个模型文件完整进入 dist；未使用浏览器或子代理，实际模型姿态、贴图清晰度和不同设备 WebGL 表现仍待用户真人验收。本地检查点待创建，未推送。
+- Home chapter-rail Q-version sticker focus follow-up: increase only the active `.chapter-sticker` scale from 1.14 to 1.3 on desktop/tablet and 1.22 at <=480px to preserve the narrow card edge and caption clearance. The manga picture stays at 1.09, the 260ms transition and 118x170 / 78x124 fixed sticker boxes stay unchanged, and reduced-motion still removes scale. Fuyukawa tests 43/43; clean detached worktree with SHA-256-matched CSS/test copies completed `npm ci` and full `npm run build` (78 routes / 79 indexed pages, modules and all 23 budgets pass; Home CSS 104.9/109.4 KiB). No browser/subagent or human motion acceptance. Root note, dirty cover manifest, source media and other themes remain untouched; no push requested.
+- Current Home hero scroll-lock follow-up after `d209add`: the user confirmed the card could expand while native document scrolling had already moved partway down, then the wheel handler trapped the page at that offset. The previous release-delay-only correction and unsnapped near-top wheel interception are superseded as a complete fix: the test simulated wheel callbacks without native displacement. The initial `scrollTo(0)` also inherited smooth page scrolling. `home-hero.mjs` now locks root scrolling only during active pull/dock, cancels in-flight smooth scrolling with one instant top restoration on entry, corrects unexpected programmatic drift, and unlocks on transition completion, reversal, explicit skip navigation, keyboard/focus exit, or Astro cleanup. Touch-only scrolling stays native as before; no artwork or card-transition styling changed.
+- Verification of the current candidate: Fuyukawa tests 43/43, including a 320px native-scroll leak during pull, return/reopen, timeout/transition release, cue/skip links, PageDown, focus exit and cleanup. A clean detached worktree with SHA-256-matched copies of only the three code/test files ran `npm ci` and the full `npm run build`: 78 Astro routes, 79 Pagefind pages, all built modules and 23 performance budgets passed (Fuyukawa Home HTML 97.6/97.7 KiB; CSS 104.8/109.4 KiB). Root note, dirty responsive-cover manifest, unrelated media and other themes were untouched. No browser/subagent or real visual acceptance; the user's actual mouse/trackpad return sequence and browser-specific overflow behavior remain pending.
+- Historical `d209add` gate: the prior 120ms release had been shorter than the card's 760ms transition; it was changed to a transform `transitionend` with a 900ms fallback and a 36px intentional reverse threshold. Those protections remain, but did not alone prevent a partially scrolled document from being locked mid-screen. A proposed per-wheel `scrollTo(0)` was rejected after the user's report of repeated up/down jitter and is not restored.
+- Verification of this Home gate version: Fuyukawa tests 43/43, including near-top drift, fast downward wheels, reversed direction, return/reopen jitter guard, transition event and timeout fallback, and listener cleanup; `git diff --check` passed. An isolated clean HEAD worktree with byte-identical copies of only the runtime/test changes ran `npm ci` and complete `npm run build`: 78 Astro routes, 79 Pagefind pages, all built modules and all 23 performance budgets passed, including Fuyukawa Home HTML 97.6/97.7 KiB. The first clean build was discarded as validation because its source copy used a relative path within the temporary worktree; the verified second build copied by absolute paths with matching SHA-256 hashes. No browser/subagent was used; the actual trackpad/mouse return feel and touch behavior remain for user acceptance. Unrelated root note, responsive-cover manifest and media remain untouched; no push requested.
+- Current Home chapter-rail follow-up on `main` from `5aa3e4a`: user requested a larger illustrated-card rail inspired by a locally available `press-stack` reference, with ordinary vertical page scrolling walking cards horizontally and only the focused manga picture and chibi sticker enlarging. The reference's sticky-screen/scroll-position mapping was read locally; its brand art/typography was not copied. `ChapterRail.astro`, `manga.css`, and `manga-runtime.mjs` now use a viewport-high sticky chapter stage and a measured document runway on fine-pointer desktop, without wheel interception; focus changes by nearest card, arrows scroll to chapters, and keyboard link focus brings the card into view. Coarse pointers and reduced motion retain native swipe/scroll without a visible horizontal bar; reduced motion removes image scaling. Home-only `overflow-x: clip` lets sticky attach to viewport, while stage clipping contains the wide rail. Existing manga/character art is unchanged.
+- Verification: theme tests 43/43; clean detached HEAD worktree with only four theme code/test changes ran `npm ci` and full `npm run build` successfully (78 Astro routes / 79 Pagefind pages, all 23 numerical budgets). Initial full build caught Home HTML at 100,118 / 100,000 bytes; removing redundant rail markup brought the final output to 99,953 bytes without raising the budget. Fuyukawa production audit passed 19 pages / 179 images / 163 local links; existing 4321 dev server serves new chapter markup with HTTP 200. Repository `npm test` in the clean worktree is 319/321 due to two pre-existing Kisara display assertions (playback-area range and 002/003 seam strip), unrelated to the theme rail. The temporary worktree was safely removed. User's dirty root note/36-cover manifest, source media and other themes were not edited. No browser/subagent or real scroll/visual acceptance; check desktop wheel/scroll reversal, compact-height framing and touch swipe by eye before calling the interaction visually accepted. Theme-only local checkpoint; no push requested.
+- September 24 publication: `main` fast-forward pushed `f6768f4..194f6ba` (10 commits) to `origin/main`; `git ls-remote` matched local `194f6ba` afterward. The range includes earlier Kisara and blog-cover commits as well as Fuyukawa work. Uncommitted root notes, responsive-cover manifest and user media were not staged or pushed. No browser, CI or deployed-site verification was performed.
+- September 24 correction on `main` at `2e74563a9fa8e743fd562f094f07b37f003ee63f`: user meant Kisara's outline-and-pen reveal only, explicitly retaining Fuyukawa's original title font. The prior Georgia Italic outline was the wrong typeface despite matching the requested motion mechanism. Original CSS used `"Segoe Print"` at weight 700; local `segoeprb.ttf` is the matching 2048-unit bold face. The known generated asset (old SHA-256 `fe78e689b639c8508bd6b252a991694278ca3dad87773107151e9f80adfc62b6`) was replaced with Segoe Print Bold outline (new SHA-256 `2a74d459851789d80e111355902c74d0c5ccd5452dd15fc766da3152df48dd7c`), keeping the 52px copy lift, dark ink/white rim/pink shadow and the same 18-stroke SVG pen-mask reveal. Offline 904px candidate loses 122/53,584 solid pixels (0.23%) against the unmasked font and adds none. Fuyukawa tests 42/42 and direct Astro build 78 routes / 79 Pagefind pages pass; Home HTML remains 99,985/100,000 bytes and the built title asset returns HTTP 200. The generator is idempotent after replacement and checks Segoe Print's Bold subfamily; no runtime font dependency. Other themes, original art and unrelated dirty media remain untouched. No browser/subagent used; actual pen timing and typeface feel await user acceptance. Logs: `%TEMP%/fuyukawa-title-print-{theme,build}.log`.
+- Scoped checkpoint: `fix(fuyukawa): trace the original handwritten title face`, five Fuyukawa-only files. Pushed in the range above.
+- Historical, superseded typography: the previous Home title follow-up baked Georgia Italic into `assets/hero-title.svg` and passed theme tests/build and Fuyukawa budgets, but the user explicitly rejected its typeface. Its code recovery point is `2e74563`; do not reuse that title outline. The 52px desktop copy lift and mobile 118/123px top offset remain requested. Repository test/budget failures from unrelated responsive-cover media remain separate.
+- Scoped local checkpoint: `style(fuyukawa): trace baked home title and raise hero copy`, seven Fuyukawa-only files. Not pushed.
+- Current flower interaction follow-up starts from `ce6f2bd137ef4b1c070ee516615be5875c3b0b4f`; Fuyukawa tree was clean, unrelated root note, responsive-cover manifest and user media dirty. User screenshot identifies the Home avatar flower as hard to catch and seemingly immobile. Confirmed source cause: 28x50 hit box was narrower than the bloom; angle was normalized against the full avatar so hovering the flower yielded very little rotation, then a 620ms transform transition dulled feedback. A 64x64 transparent target preserves the bloom/stem/leaf artwork positions (including its leaf and rotation pivot); flower-local hover and pointer-captured drag give direct bounded sway, with release/cancel/navigation cleanup and reduced-motion handling. Focused manga tests 15/15 pass; direct Astro build 78 routes / 79 Pagefind pages passes, generated Home contains the flower marker and 64px/docked pointer rules. The local dev server serves the themed Home with HTTP 200 on port 4321. Repository tests 319/320 pass: unrelated dirty responsive-cover manifest now has 36 sources while `tests/media-optimization.test.ts` still asserts 24. Do not alter that separate task to force green. No browser/subagents used; actual feel remains for user acceptance. Logs: `%TEMP%/fuyukawa-flower-{focused-final,repository,build-final}.log`.
+- Flower change has a scoped local checkpoint under `fix(fuyukawa): make avatar flower easy to flick`; only five Fuyukawa files were staged. Nothing was pushed.
+- September 23 visual follow-up: the user's Home/Blog screenshots show two different nav treatments, not merely a background-contrast difference. Confirmed cause: the common `refresh.css` owns the Home pill but `refresh-pages.css` added an inner-page-specific override to its fill, border, blur, shadow, and pseudo highlight. A first attempt to retint that override was rejected by the user before commit; it was removed. Inner pages now inherit the exact same shared pill rules as Home, keeping centered placement and the transparent header band. Focused tests 14/14, repository tests 320/320, direct Astro build 78 routes / 79 Pagefind pages pass. Built Home and Blog share `index.BSXH5lnB.css`; Blog's additional `refresh-pages.CDFBwtrp.css` has no nav/header selectors or old white gradient. No browser or subagent used; human visual acceptance remains pending. Logs: `%TEMP%/fuyukawa-nav-shared-{tests,build}.log`.
+- September 23 follow-up on `main` at `cdc662da2ea4dd72cbf27cb4d5356e1124b22acc`: Fuyukawa tree clean; root note and unrelated media dirty. User now requests one consistent portrait cover package for Home/Blog, using Kisara's 7:10 crop ratio and focal positions, plus visible liquid-glass navigation on inner pages. This supersedes the earlier `contain` preference, but not the objection to landscape frames cutting portraits. Kisara remains read-only. The shared Fuyukawa 7:10 poster style now uses inset mat, thin edge and `cover` at `50% 32%`; only cover-08 emits its `50% 30%` override. Existing responsive source sets remain. Non-Home pages load a higher-specificity pill-only glass layer with highlight, stronger blur and edge/shadow; the transparent header band and centered navigation remain. No source images changed.
+- Final non-browser verification for this follow-up: focused Fuyukawa tests 40/40, repository tests 320/320, direct Astro production build 78 routes / 79 Pagefind pages, Fuyukawa generated-page audit 19 pages / 178 images / 163 theme links. Build markup has 3 Home and 13 Blog poster frames; only one blog frame outputs the exceptional focal style. Home does not load inner-page CSS; Blog and sample article do. Existing 4321 Home/Blog/Games/article routes return HTTP 200; no browser or subagent used. Human evaluation of crop focus and glass feel is pending.
+- Numeric performance limits pass unchanged, including Fuyukawa Home HTML 99,925 / 100,000 bytes and CSS 103.2 / 109.4 KiB. The budget command still exits nonzero solely because current public source covers and Kisara reviewed candidate art are copied into `dist`, a pre-existing unrelated media exclusion failure; do not move/delete user materials as part of this theme request. The first implementation emitted redundant default inline focus on three Home covers and exceeded the tight HTML limit by 81 bytes; this was corrected by relying on the CSS default and removing a redundant class. Logs: `%TEMP%\fuyukawa-cover-glass-{focused-final,repository-final,build-final,budgets-final}.log`. Build/test processes exited.
+- Scoped local implementation checkpoint: `857d8020744893e0c9ba2141b7d66bc47ef247c8` (`style(fuyukawa): unify portrait covers and inner-page glass nav`), seven theme-only files. Not pushed. The pre-change `cdc662d` remains available; unrelated root note and media were not staged.
+- September 23 follow-up on `main` at `706a44cc71783afa71b08162d5ee6402ccf18edb` starts from a clean Fuyukawa tree. The user reports an article TOC stuck at the article start, a hard lower edge on the separated Home character, and an invisible daily-notice close glyph. The unrelated root note and untracked media remain untouched; browser/subagents remain prohibited.
+- Confirmed stylesheet causes: legacy `body { overflow-x: hidden }` creates a non-viewport scroll container for the article TOC's `position: sticky`; the layered hero front image has no own lower-alpha transition; refreshed notice CSS hides the legacy glyph with `font-size: 0` and disables its `::before` icon. Fix only the article body overflow (except while notice-locked), the foreground image mask, and the notice button typography.
+- September 23 implementation: `refresh-pages.css` uses `overflow-x: clip` only on article body outside notice lock, preserving viewport sticky; `manga.css` masks only the independent front image over its lower 24% while keeping foreground/backplate files and the overall hero blend unchanged; `refresh.css` restores a visible `×` glyph and foreground stacking in the notice close button. Focused theme tests 40/40 and repository tests 320/320 pass. Direct Astro build completed 78 routes / 79 Pagefind pages, and the Fuyukawa generated-page audit passed 19 pages / 178 images / 163 local links. Built CSS includes all three effective rules; existing 4321 Home and article HTTP routes return 200. No browser or real visual verification was performed.
+- Budget check: all numerical limits pass, including Fuyukawa Home HTML 97.5/97.7 KiB and CSS 102.8/109.4 KiB. The command still exits nonzero because the current repository's public assets copy the checker-excluded reviewed source covers and Kisara candidate art into `dist` (see `scripts/check-performance-budgets.mjs`); none are modified by this task. Do not delete user source media to make the checker green. Logs: `%TEMP%\fuyukawa-sept23-{focused-final,repository,build}.log`; test/build processes exited. Human assessment of sticky behavior and fade feel remains pending.
+- Scoped local code checkpoint: `3058d22bfa558f67a1868868996e297612851915` (`fix(fuyukawa): restore article index and home controls`); only five Fuyukawa source/test/note files. Not pushed. The pre-fix `706a44c` remains the recovery point; unrelated working-tree changes were not staged.
+- September 9 follow-up: the user approves the overall manga direction and asks
+  for five localized corrections: clipped utility drawer/player, sakura petals,
+  Live2D leaving the viewport after scrolling, oversized About game thumbnails,
+  and low-contrast Home lettering. This is not blanket acceptance of every edge.
+- During the follow-up the user rejects the first new petal as an elongated heart
+  and too transparent. Superseded: deep symmetric notch, 1.32-height frame,
+  narrow .35 flutter scale and compounded .26-.59 opacity. Current correction:
+  side-edge shallow notch (not a central heart cleft), square frame,
+  .7-1 flutter scale and .79-.98 steady
+  combined opacity. Earlier candidate is backed up outside the repository at
+  `C:\Users\a1234\Desktop\codex-backups\fuyukawa-utility-20260909\petal-heart-candidate.svg`.
+- Recovery point for this follow-up: `2c73400aa95135ec6c741f734c1c5aa698125931`
+  (code milestone `787fa0c`); theme clean before edits. Preserve unrelated root
+  note/media changes. Main agent only; browser/subagents remain prohibited.
+- Confirmed causes: drawer keeps intrinsic grid row sizes inside a max-height
+  scroll area while hiding its scrollbar; mobile top offset is not included in
+  that height. About game cards specify columns without `display: grid`, so their
+  full-width images ignore the intended thumbnail column. Home white lettering
+  has insufficient separation from white manga panels.
+- Live2D's own theme rule does not define fixed positioning or hidden/active
+  states; it relies on dynamically injected external CSS. That stylesheet is not
+  persisted across Astro head swaps. Pinning/state styling will be theme-owned.
+  The exact user scroll sequence is not browser-reproduced.
+- Implemented utility follow-up: viewport-bounded, visibly scrollable drawer;
+  compact record deck and native icon/range controls; corrected muted-volume UI;
+  theme-owned Live2D fixed/hidden states, bounded pointer drag, stale async/hide
+  guards and stylesheet reattachment after swaps; 92x64 contained game thumbnails;
+  dark handwritten title interiors with white stroke. Final verification passes
+  38 theme tests and 181 repository tests, direct Astro production build (74
+  routes / 75 indexed pages), and all 17 unchanged performance budgets. Home HTML
+  is 96.7/97.7 KiB and CSS is 102.5/109.4 KiB.
+- The generated CSS audit caught Astro's higher-specificity scoped About rules
+  overriding some global thumbnail declarations. Game card geometry now has one
+  owner in `AboutPage.astro`; the old conflicting image rules were removed. Do not
+  reintroduce competing image sizes in `refresh-pages.css`.
+- Built-output audit: 18 theme pages / 172 images / 77 inline scripts / 154 local
+  links / 57 stylesheets pass, plus an explicit emitted scoped-CSS assertion for
+  92x64 contained game thumbnails. Existing 4321 routes/CSS/final petal return 200.
+  The existing server (PID 23024) was not restarted. Build/test processes exited.
+- A 168x168, 9188-byte offline raster review of the final petal is at
+  `%TEMP%\fuyukawa-petal-final-review.png`; it is not a browser screenshot.
+  Source art hashes, hero layer pixels and prior cover/header tests still pass.
+  Logs: `%TEMP%\fuyukawa-utilities-{focused,repository,build}-final.log`.
+- This follow-up is implemented and non-browser verified. Human acceptance of
+  the revised petal and actual drawer/drag feel is pending; no browser or subagent
+  was used. Root notes retain their unrelated 457-line addition; other themes and
+  original media are untouched. Scoped checkpoint subject:
+  `fix(fuyukawa): polish viewport utilities and sakura petals`. Nothing is pushed.
+- Code checkpoint created: `911fa6fd2bef6e6900b1b0dadfc04340d81d7b54`,
+  10 theme-only files. Scoped staging and whitespace checks passed; the previous
+  `2c73400` recovery point remains available.
+- Requested: refresh every Fuyukawa page and section with a fresh anime aesthetic.
+- Main agent only. Edit only `src/themes/fuyukawa-kagari/` and its dedicated
+  `public/themes/fuyukawa-kagari/` assets.
+- The user explicitly prohibits browser and subagent use in this task without
+  permission. Source, fixture tests, build and HTTP checks are not visual acceptance.
+- Original refresh baseline: `main`, `4fba1e1663f24a1f0e4f71e03c1575fbf0c36abc`.
+  The layered manga iteration starts from `671b016`; see the final section.
+- Original theme copied to
+  `C:\Users\a1234\Desktop\codex-backups\fuyukawa-refresh-20260909-001424\fuyukawa-kagari`.
+- Existing root note edits and untracked media are unrelated and must stay intact.
+- Existing preview: `http://127.0.0.1:4321/themes/fuyukawa-kagari/`.
+- Presentation uses a theme body attribute and a final stylesheet so legacy
+  interaction styles remain available. No shared configuration or assets changed.
+- Preserve the homepage reveal state machine, tag canvas, music and Live2D.
+- Blog search now rejects stale async results and reinitializes after navigation;
+  project filters reinitialize after navigation and expose pressed states.
+- Revised implementation and non-browser verification are complete; visual
+  acceptance remains pending. Local checkpoint subject:
+  `style(fuyukawa): renew anime diary pages and utilities`. Nothing is pushed.
+
+## September 9 Review
+
+- The first green/minimal candidate was rejected by the user. It loaded correctly
+  in their screenshot but looked too generic, with a heavy green title and a
+  partially exposed tool drawer. Do not call this an accepted visual direction.
+- The revision uses a handwritten white/sky title with pink offset detail,
+  translucent navigation, pastel paper edges on individual entries, and a fully
+  concealed drawer with a visible icon handle. Original media remains untouched.
+- Pre-revision snapshot:
+  `C:\Users\a1234\Desktop\codex-backups\fuyukawa-refresh-20260909-001424\before-anime-rework`.
+- Vite on port 4321 cached the initial missing relative stylesheet import.
+  Switching to the existing project alias restored both page and CSS HTTP 200;
+  the file was present, and no user server was stopped.
+- First-pass tests: 9 theme fixtures, 181 repository tests, 74 built routes and 75
+  indexed pages passed. CSS exceeded the existing 112000-byte budget; superseded
+  declarations and unused legacy sections were subsequently consolidated with
+  PostCSS and selector parsing.
+
+## Final Verification
+
+- Theme fixtures: `node --test src/themes/fuyukawa-kagari/tests/refresh.test.mjs`,
+  10/10, including drawer concealment, search races and route reinitialization.
+- Repository tests: `npm test`, 181/181.
+- Production: direct Astro build, 74 routes, 75 Pagefind pages. Asset generation
+  was deliberately not run because no original image/music regeneration is needed.
+- All 17 existing performance budgets pass without changes: Fuyukawa Home HTML
+  96.5 KiB / 97.7 KiB; CSS 105.7 KiB / 109.4 KiB.
+- Parse5 audit: 18 Fuyukawa documents, 125 image references, 78 inline scripts and
+  150 Fuyukawa links checked, no missing local resources or script syntax errors.
+- Original 4321 preview returns HTTP 200 for Home, Blog, Game, Works, About and a
+  sample article. The themed 404 correctly responds with status 404.
+- `public/`, shared data/configuration/routes, Kisara and Blank have no task diff.
+  The root development note's pre-existing changes are untouched.
+- Test/build logs: `%TEMP%/fuyukawa-refresh-{focused-final,tests-final,build-final}.log`.
+  Test and build processes exited normally. No browser or subagent was used.
+- Visual acceptance is still pending. Subsequent cover/header feedback and its
+  corrections are recorded below; earlier automated passes do not imply approval.
+
+## Cover and Header Correction
+
+- User feedback on `97a78da6561078d5a96e6a2f3ca7880c0122872e`: Home and Blog covers
+  cut off the subjects, and the user prefers a transparent centered header.
+  This supersedes the earlier landscape-frame and opaque header decisions.
+- Root cause: portrait sources were fitted with `cover` into forced 8:5 boxes.
+  The screenshot's sources are 1003x1416, 1319x2000 and 1400x2207, respectively.
+- Both listings now use stable 7:10 frames with centered `contain`, including
+  square/landscape fallbacks. Images are not edited; old Blog crop offsets removed.
+- Header band is transparent; equal side grid tracks place the glass navigation
+  at viewport center independently of the brand. Narrow screens center only the
+  navigation and omit the brand to avoid overlap.
+- Recovery point: `97a78da`. Scope limited to Fuyukawa cover/header presentation,
+  targeted tests and this note. No browser or subagent use.
+- Verification: 12/12 theme tests, 181/181 repository tests, 74 built pages and
+  75 Pagefind pages. All 17 budgets pass; Fuyukawa Home CSS is 106.0/109.4 KiB.
+  Test/build processes exited normally. Logs use `%TEMP%/fuyukawa-cover-header-*`.
+- Existing 4321 Home, Blog and stylesheet return HTTP 200; the served CSS contains
+  the 7:10 frames, contain fitting and symmetric navigation tracks. No server was
+  restarted and no image, shared route, other theme or root note was changed.
+- Implemented and automatically verified; actual visual acceptance remains with
+  the user. Scoped local checkpoint subject:
+  `fix(fuyukawa): preserve cover artwork and center transparent navigation`.
+
+## Layered Manga Art Direction
+
+- New request: separate the Home character and manga backdrop without harming
+  either, add parallax, and design all theme pages around the supplied artwork.
+- Recovery checkpoint: `671b0161a53f468550e873ed5de81b8fe375cdd0`, theme clean.
+- The user authorizes deriving crops, cutouts and redraws from all 55 still images
+  under root `fuyukawa/`; the two MP4s are excluded. Sources remain read-only.
+- Keep the recently corrected complete article covers and centered transparent
+  navigation. Preserve original assets under their existing filenames.
+- Only the main agent, no browser/subagents. Use local compressed contact sheets,
+  deterministic media checks, runtime fixtures, compilation and HTTP verification;
+  none of these is human visual acceptance.
+- Original source images total 12.33 MiB. Inspection copies go to
+  `%TEMP%/fuyukawa-art-review`; generated production artwork stays theme-local.
+- Media implemented: 19 derivatives (about 2.94 MiB), including five transparent
+  stickers, a lossless 1920x1080 character cutout and a rebuilt manga background.
+  `tools/prepare-art.mjs` records source/output hashes and exact crop provenance.
+- The flattened poster has no recoverable hidden background. A first edge-fill
+  attempt visibly smeared manga lines and was rejected internally. The current
+  background keeps five intact original panel regions pixel-identical and composes
+  clean supplied panels in the center. No claim of recovering the original layers.
+  The original poster is unchanged and remains the failed-load fallback.
+- Runtime: small bounded pointer spring + scroll depth; transform on each image,
+  no global input capture, atomic decode, idle/offscreen/hidden/lite/reduced-motion
+  handling and Astro navigation cleanup. The existing profile reveal state machine
+  is mechanically extracted into `lib/home-hero.mjs`, not redesigned.
+- Page direction implemented: horizontal chapter leaves, category-spine archive,
+  numbered workshop sheets, illustrated playroom, personal colour-plate album,
+  and article colophon/margin art. Complete article covers and centered nav remain.
+- Intermediate snapshot before CSS loading split:
+  `C:\Users\a1234\Desktop\codex-backups\fuyukawa-manga-before-style-split-20260909`.
+- First media/runtime fixtures: 13/13 pass, previous refresh fixtures: 12/12 pass.
+  Pixel test caught a 9px panel overlap; reconstruction tile moved, and intact
+  panel byte comparisons now pass. Build caught unavailable icons; reused allowed
+  existing icons without changing shared config. Final results are recorded below.
+- Inner-page-only rules move to `refresh-pages.css` / `manga-pages.css`. Ordinary
+  per-page imports still bundled them into Home through the theme barrel exports.
+  BaseLayout now conditionally links their Vite `?url` assets on non-Home routes;
+  no shared route, barrel or budget changes are needed.
+
+### Final State And Verification
+
+- Implemented and automatically verified; not browser-verified or human-accepted.
+  The user still needs to judge the art direction, hair/earmuff cutout edges,
+  parallax feel and actual mobile typography. Do not label this visually approved.
+- Home's foreground uses contain fitting with a 16px lower movement allowance,
+  while the independently rebuilt background fills the scene. Original opaque
+  character pixels and five preserved background rectangles compare exactly.
+  This is deterministic masking/compositing, not generative restoration.
+- The old duplicate Blog list was removed so category filtering has one source
+  of truth. Search intentionally continues searching the whole archive.
+- Existing profile reveal states are preserved by a VM interaction test.
+  Hero cleanup now cancels initial-scroll and avatar timers. Before-swap cleanup
+  also stops the old tag-rain/notice runtime and releases the notice body lock.
+- Theme tests: 26/26. Repository tests: 181/181. Production: 74 routes and
+  75 Pagefind pages. All 17 unchanged performance budgets pass.
+  Home HTML 93.5/97.7 KiB; Home CSS 92.7/109.4 KiB (previously 106.0 KiB).
+- `tools/audit-build.mjs`: 18 theme documents, 172 image references, 77 inline
+  scripts, 154 local links and 57 stylesheet references pass. No duplicate IDs,
+  unresolved controls, missing assets or inner-page styles on Home.
+- Original 4321 preview responds HTTP 200 for Home/Blog/Works/Game/About and both
+  split hero images. No preview server was started or stopped. Build/test
+  processes exited normally. Logs: `%TEMP%/fuyukawa-manga-*-final.log`.
+- Only this theme's source and `public/themes/fuyukawa-kagari/assets/manga/`
+  derivatives belong to the patch. The root note's pre-existing 457-line addition,
+  other themes, shared routes/content, all original images and both MP4s are intact.
+- Scoped local milestone subject:
+  `feat(fuyukawa): build a layered manga notebook`. Nothing is pushed.
+- Code checkpoint created: `787fa0c`, 49 theme-only files. The scoped staging
+  audit and whitespace check pass; the original `671b016` recovery point and
+  external intermediate snapshot remain available.
